@@ -131,7 +131,8 @@ func (e *endpoint) handleICMP(r *stack.Route, pkt *stack.PacketBuffer) {
 			ReserveHeaderBytes: int(r.MaxHeaderLength()),
 			Data:               dataVV,
 		})
-
+		// replyPkt.TransportHeader().Push(0) // This can't be done yet.
+		replyPkt.TransportProtocolNumber = header.ICMPv4ProtocolNumber
 		// Send out the reply packet.
 		sent := stats.ICMP.V4PacketsSent
 		if err := r.WritePacket(nil /* gso */, stack.NetworkHeaderParams{
