@@ -151,7 +151,7 @@ type Endpoint interface {
 	// block if no new connections are available.
 	//
 	// The returned Queue is the wait queue for the newly created endpoint.
-	Accept() (Endpoint, *syserr.Error)
+	Accept(*tcpip.FullAddress) (Endpoint, *syserr.Error)
 
 	// Bind binds the endpoint to a specific local address and port.
 	// Specifying a NIC is optional.
