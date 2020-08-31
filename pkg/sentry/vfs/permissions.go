@@ -15,7 +15,9 @@
 package vfs
 
 import (
+	"fmt"
 	"math"
+	"strings"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
@@ -283,4 +285,55 @@ func CheckLimit(ctx context.Context, offset, size int64) (int64, error) {
 		return remaining, nil
 	}
 	return size, nil
+}
+
+// CheckXattrPermissions checks permissions for extended attribute access.
+// This is analogous to fs/xattr.c:xattr_permission(). Some key differences:
+// * Does not check for read-only filesystem property.
+// * Does not check inode immutability or append only mode. In both cases EPERM
+//   must be returned by filesystem implementations.
+// * Restrictions are applied on security.* and system.* namespaces on the VFS
+//   layer itself here while Linux leaves it completely to filesystem
+//   implementations to handle those namespaces.
+func CheckXattrPermissions(creds *auth.Credentials, ats AccessTypes, mode linux.FileMode, kuid auth.KUID, kgid auth.KGID, name string) error {
+	switch {
+	case ats.MayRead():
+		if err := GenericCheckPermissions(creds, MayRead, mode, kuid, kgid); err != nil {
+			return err
+		}
+	case ats.MayWrite():
+		if err := GenericCheckPermissions(creds, MayWrite, mode, kuid, kgid); err != nil {
+			return err
+		}
+	default:
+		panic(fmt.Sprintf("CheckXattrPermissions called with impossible AccessTypes: %v", ats))
+	}
+
+	switch {
+	case strings.HasPrefix(name, linux.XATTR_TRUSTED_PREFIX):
+		// The trusted.* namespace can only be accessed by privileged
+		// users.
+		if creds.HasCapability(linux.CAP_SYS_ADMIN) {
+			return nil
+		}
+		if ats.MayWrite() {
+			return syserror.EPERM
+		}
+		return syserror.ENODATA
+	case strings.HasPrefix(name, linux.XATTR_USER_PREFIX):
+		// In the user.* namespace, only regular files and directories can have
+		// extended attributes. For sticky directories, only the owner and
+		// privileged users can write attributes.
+		filetype := mode.FileType()
+		if filetype != linux.ModeRegular && filetype != linux.ModeDirectory {
+			if ats.MayWrite() {
+				return syserror.EPERM
+			}
+			return syserror.ENODATA
+		}
+		if filetype == linux.ModeDirectory && mode&linux.ModeSticky != 0 && ats.MayWrite() && !CanActAsOwner(creds, kuid) {
+			return syserror.EPERM
+		}
+	}
+	return nil
 }
